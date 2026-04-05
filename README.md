@@ -14,10 +14,11 @@ Navigator is a voice-first browser agent for people who struggle with the web �
 - [uv](https://astral.sh/uv) — Python package manager (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - Google Chrome (required for Web Speech API)
 - A [Gemini API key](https://aistudio.google.com/app/apikey) (free tier works)
+- A [Browser Use API key]
+- An Eleven Labs API key
 
 ### 2. Setup
 ```bash
-cd navigator
 ./setup.sh
 ```
 
@@ -27,6 +28,8 @@ This installs Python deps, Playwright Chromium, and npm packages.
 ```bash
 # Edit backend/.env
 GEMINI_API_KEY=your_actual_key_here
+BROWSER_USE_API_KEY=your_actual_key_here
+ELEVEN_LABS_API_KEY=your_actual_key_here
 ```
 
 ### 4. Run
@@ -56,33 +59,6 @@ User speaks → Web Speech API → /api/task → NavigatorAgent
 
 ### Key safety feature: Human in the Loop
 Before any irreversible action (form submission, purchase, sending a message), Navigator **pauses completely** and asks the user for explicit permission. The user can say "yes" or "no" aloud, or tap the giant YES/NO buttons. Nothing happens without consent.
-
----
-
-## Demo Script (for judges/presenters)
-
-Three demo preset buttons appear subtly at the bottom of the screen (low opacity). They trigger pre-scripted flows without needing to use voice — perfect for live stage demos.
-
-### Demo 1: Prescription Refill
-**Click:** "Demo: Refill Prescription"
-**Watch:** Navigator navigates to CVS, finds the refill form, fills it out, then **pauses** and asks:
-> "I'm about to submit your prescription refill for Lisinopril 10mg at CVS on University Ave. Shall I go ahead?"
-
-The confirmation modal takes over the full screen. Judge taps YES → Navigator completes the request.
-
-**Talking points:**
-- The agent narrates every step in plain English
-- Technical browser actions are translated: "clicking #btn-submit" → "I'm clicking the Submit button for you"
-- The pause before submission is the key safety moment
-
-### Demo 2: Pay Electric Bill
-**Click:** "Demo: Pay a Bill"
-**Watch:** Navigator goes to SDG&E, finds the bill ($127.43), selects bank account on file, then **pauses**:
-> "I'm about to pay your electricity bill of $127.43. Is that okay?"
-
-### Demo 3: Find a Doctor
-**Click:** "Demo: Find a Doctor"
-**Watch:** Navigator searches Medicare.gov, filters by location, returns 3 local doctors. No confirmation needed — this is read-only browsing.
 
 ---
 
@@ -135,8 +111,8 @@ navigator/
 | LLM (narration) | Gemini gemini-2.0-flash via `google-generativeai` |
 | Backend | FastAPI + SSE |
 | Frontend | React 18 + Tailwind CSS |
-| Voice input | Web Speech API (SpeechRecognition) |
-| Voice output | Web Speech API (SpeechSynthesis) |
+| Voice input | Eleven Labs API |
+| Voice output | Eleven Labs API |
 | Python deps | uv |
 
 ---
@@ -158,13 +134,6 @@ navigator/
 **Voice not working?**
 → Must use Google Chrome. Safari/Firefox have limited Web Speech API support.
 → Check that your browser has microphone permission for localhost.
-
-**"GEMINI_API_KEY not set" error?**
-→ Edit `backend/.env` and add your key from https://aistudio.google.com/app/apikey
-
-**Browser agent not browsing?**
-→ The demo runs a simulation by default. For live browsing, install browser-use:
-   `cd backend && uv add browser-use langchain-google-genai`
 
 **Port already in use?**
 → Kill existing processes: `lsof -ti:8000 | xargs kill` and `lsof -ti:5173 | xargs kill`
