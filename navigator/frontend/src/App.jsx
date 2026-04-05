@@ -5,7 +5,7 @@ import ConfirmationModal from "./components/ConfirmationModal";
 import StatusDisplay from "./components/StatusDisplay";
 import LanguageSelector, { LANGUAGES } from "./components/LanguageSelector";
 
-const API = "http://localhost:8000";
+const API = "";
 
 const DEMO_TASKS = [
   { label: "💊 Refill Prescription", task: "I need to refill my prescription on CVS pharmacy website" },
@@ -14,19 +14,19 @@ const DEMO_TASKS = [
 ];
 
 export default function App() {
-  const [status, setStatus]             = useState("idle");
-  const [narrations, setNarrations]     = useState([]);
+  const [status, setStatus] = useState("idle");
+  const [narrations, setNarrations] = useState([]);
   const [confirmation, setConfirmation] = useState(null);
-  const [taskId, setTaskId]             = useState(null);
-  const [liveUrl, setLiveUrl]           = useState(null);
-  const [langCode, setLangCode]         = useState("en-US");
+  const [taskId, setTaskId] = useState(null);
+  const [liveUrl, setLiveUrl] = useState(null);
+  const [langCode, setLangCode] = useState("en-US");
 
   const eventSourceRef = useRef(null);
-  const synthRef       = useRef(window.speechSynthesis);
-  const voicesRef      = useRef([]);
-  const busyRef        = useRef(false);
-  const speakQueueRef  = useRef([]);
-  const isSpeakingRef  = useRef(false);
+  const synthRef = useRef(window.speechSynthesis);
+  const voicesRef = useRef([]);
+  const busyRef = useRef(false);
+  const speakQueueRef = useRef([]);
+  const isSpeakingRef = useRef(false);
 
   // Load available voices
   useEffect(() => {
@@ -42,7 +42,7 @@ export default function App() {
     isSpeakingRef.current = true;
 
     const utt = new SpeechSynthesisUtterance(text);
-    utt.rate  = 0.78;   // Slightly slower than before — clear but not sluggish
+    utt.rate = 0.78;   // Slightly slower than before — clear but not sluggish
     utt.pitch = 1.0;
 
     // Pick best voice for the selected language
@@ -94,9 +94,9 @@ export default function App() {
   const handleEvent = useCallback((event) => {
     const data = JSON.parse(event.data);
     switch (data.type) {
-      case "live_url":   setLiveUrl(data.url); break;
+      case "live_url": setLiveUrl(data.url); break;
       case "processing": setStatus("processing"); addNarration(data.message); break;
-      case "narration":  setStatus("working");    addNarration(data.message); break;
+      case "narration": setStatus("working"); addNarration(data.message); break;
       case "confirmation_required":
         setStatus("waiting");
         setConfirmation({ message: data.message, taskId });
