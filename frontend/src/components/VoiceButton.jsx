@@ -5,6 +5,7 @@ const MAX_LISTEN_MS = 10000; // hard cutoff — never listens forever
 export default function VoiceButton({ status, onTranscript, onListenStart, langCode = "en-US" }) {
   const recognitionRef  = useRef(null);
   const finalTranscript = useRef("");
+  const interimRef      = useRef("");
   const silenceTimer    = useRef(null);
   const maxTimer        = useRef(null);
   const [error, setError] = useState(null);
@@ -40,28 +41,20 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
     rec.lang           = langCode;
 
     rec.onresult = (e) => {
-      let gotFinal = false;
       let interimText = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) {
           finalTranscript.current += e.results[i][0].transcript + " ";
-          gotFinal = true;
         } else {
           interimText += e.results[i][0].transcript;
         }
       }
+      // Store latest interim in case Chrome never fires isFinal (production HTTPS quirk)
+      if (interimText.trim()) interimRef.current = interimText;
 
-      if (gotFinal) {
-        // Got a definitive result — submit after 1.5s silence
-        clearTimeout(silenceTimer.current);
-        silenceTimer.current = setTimeout(submitAndStop, 1500);
-      } else if (interimText.trim() && !finalTranscript.current) {
-        // Production fallback: Chrome sometimes never fires isFinal on deployed HTTPS.
-        // If we only have interim results, treat them as the transcript after 2s silence.
-        finalTranscript.current = interimText;
-        clearTimeout(silenceTimer.current);
-        silenceTimer.current = setTimeout(submitAndStop, 2000);
-      }
+      // Reset silence timer on ANY speech activity — final or interim
+      clearTimeout(silenceTimer.current);
+      silenceTimer.current = setTimeout(submitAndStop, 1800);
     };
 
     rec.onerror = (e) => {
@@ -80,8 +73,10 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
 
     rec.onend = () => {
       clearTimers();
-      const text = finalTranscript.current.trim();
+      // Use final transcript if available, fall back to interim (Chrome HTTPS quirk)
+      const text = (finalTranscript.current || interimRef.current).trim();
       finalTranscript.current = "";
+      interimRef.current = "";
       if (text) onTranscript(text);
     };
 
@@ -92,6 +87,7 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
     if (!isIdle) return;
     setError(null);
     finalTranscript.current = "";
+    interimRef.current = "";
     clearTimers();
     try {
       recognitionRef.current?.start();
