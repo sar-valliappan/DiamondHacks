@@ -4,6 +4,7 @@ import NarrationFeed from "./components/NarrationFeed";
 import ConfirmationModal from "./components/ConfirmationModal";
 import StatusDisplay from "./components/StatusDisplay";
 import LanguageSelector, { LANGUAGES } from "./components/LanguageSelector";
+import SimplifiedView from "./components/SimplifiedView";
 
 const API = "";
 
@@ -20,6 +21,7 @@ export default function App() {
   const [taskId, setTaskId] = useState(null);
   const [liveUrl, setLiveUrl] = useState(null);
   const [langCode, setLangCode] = useState("en-US");
+  const [focusMode, setFocusMode] = useState(false);
 
   const eventSourceRef = useRef(null);
   const synthRef = useRef(window.speechSynthesis);
@@ -197,13 +199,27 @@ export default function App() {
               <div className="live-browser-wrap">
                 <div className="live-browser-label">
                   <span className="live-dot" />Live browser
+                  <button
+                    className={`simplify-toggle-btn ${focusMode ? "active" : ""}`}
+                    onClick={() => setFocusMode(f => !f)}
+                    title="Toggle Reader Mode"
+                  >
+                    {focusMode ? "⊞ Full Page" : "👓 Reader Mode"}
+                  </button>
                 </div>
-                <iframe
-                  src={liveUrl}
-                  className="live-browser-frame"
-                  title="Navigator live browser"
-                  allow="clipboard-read; clipboard-write"
-                />
+                {focusMode ? (
+                  <SimplifiedView
+                    narrations={narrations}
+                    onExit={() => setFocusMode(false)}
+                  />
+                ) : (
+                  <iframe
+                    src={liveUrl}
+                    className="live-browser-frame"
+                    title="Navigator live browser"
+                    allow="clipboard-read; clipboard-write"
+                  />
+                )}
               </div>
             </div>
             <div className="split-right">
