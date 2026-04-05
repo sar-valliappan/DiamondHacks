@@ -157,15 +157,16 @@ html, body, #root {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 20px 24px 16px;
+  justify-content: flex-start;
+  gap: 14px;
+  padding: 10px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
 }
 
 /* Right panel: narration feed, independent scroll */
 .split-right {
-  width: 340px;
+  width: 360px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -243,19 +244,27 @@ html, body, #root {
   gap: 16px;
 }
 
-/* Smaller in split view — fits the compact voice row */
+/* Compact inline mic in split view */
+.split-voice-row .voice-btn-wrap {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
 .split-voice-row .voice-btn {
-  width: 80px;
-  height: 80px;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
 }
 
 .split-voice-row .voice-btn svg {
-  width: 30px;
-  height: 30px;
+  width: 18px;
+  height: 18px;
 }
 
 .split-voice-row .voice-label {
-  font-size: 15px;
+  font-size: 14px;
+  min-height: unset;
 }
 
 .voice-btn {
