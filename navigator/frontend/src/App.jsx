@@ -3,6 +3,7 @@ import VoiceButton from "./components/VoiceButton";
 import NarrationFeed from "./components/NarrationFeed";
 import ConfirmationModal from "./components/ConfirmationModal";
 import StatusDisplay from "./components/StatusDisplay";
+import LanguageSelector, { LANGUAGES } from "./components/LanguageSelector";
 
 const API = "http://localhost:8000";
 
@@ -13,35 +14,77 @@ const DEMO_TASKS = [
 ];
 
 export default function App() {
-  const [status, setStatus]           = useState("idle");
-  const [narrations, setNarrations]   = useState([]);
+  const [status, setStatus]             = useState("idle");
+  const [narrations, setNarrations]     = useState([]);
   const [confirmation, setConfirmation] = useState(null);
-  const [taskId, setTaskId]           = useState(null);
-  const [liveUrl, setLiveUrl]         = useState(null);
+  const [taskId, setTaskId]             = useState(null);
+  const [liveUrl, setLiveUrl]           = useState(null);
+  const [langCode, setLangCode]         = useState("en-US");
+
   const eventSourceRef = useRef(null);
   const synthRef       = useRef(window.speechSynthesis);
   const voicesRef      = useRef([]);
   const busyRef        = useRef(false);
+  const speakQueueRef  = useRef([]);
+  const isSpeakingRef  = useRef(false);
 
+  // Load available voices
   useEffect(() => {
     const load = () => { voicesRef.current = synthRef.current.getVoices(); };
     load();
     synthRef.current.onvoiceschanged = load;
   }, []);
 
-  const speak = useCallback((text) => {
-    if (!text) return;
-    synthRef.current.cancel();
+  // ── Speech queue: prevents overlap & controls rate ─────────────────
+  const processQueue = useCallback(() => {
+    if (isSpeakingRef.current || speakQueueRef.current.length === 0) return;
+    const { text, lang } = speakQueueRef.current.shift();
+    isSpeakingRef.current = true;
+
     const utt = new SpeechSynthesisUtterance(text);
-    utt.rate = 0.85; utt.pitch = 1.0;
-    const v = voicesRef.current;
+    utt.rate  = 0.78;   // Slightly slower than before — clear but not sluggish
+    utt.pitch = 1.0;
+
+    // Pick best voice for the selected language
+    const voices = voicesRef.current;
+    const baseLang = lang.split("-")[0];
+
     const voice =
-      v.find(x => x.name.includes("Google US English")) ||
-      v.find(x => x.name === "Samantha") ||
-      v.find(x => x.lang.startsWith("en")) || v[0];
+      voices.find(v => v.lang === lang && v.name.includes("Google")) ||
+      voices.find(v => v.lang === lang) ||
+      voices.find(v => v.lang.startsWith(baseLang) && v.name.includes("Google")) ||
+      voices.find(v => v.lang.startsWith(baseLang)) ||
+      voices.find(v => v.lang.startsWith("en")) ||
+      voices[0];
+
     if (voice) utt.voice = voice;
+    utt.lang = lang;
+
+    utt.onend = () => {
+      isSpeakingRef.current = false;
+      // Small pause between messages so they don't blur together
+      setTimeout(processQueue, 350);
+    };
+    utt.onerror = () => {
+      isSpeakingRef.current = false;
+      setTimeout(processQueue, 350);
+    };
+
     synthRef.current.speak(utt);
   }, []);
+
+  const speak = useCallback((text) => {
+    if (!text) return;
+    speakQueueRef.current.push({ text, lang: langCode });
+    processQueue();
+  }, [langCode, processQueue]);
+
+  // When language changes, stop current speech and clear queue
+  useEffect(() => {
+    synthRef.current.cancel();
+    speakQueueRef.current = [];
+    isSpeakingRef.current = false;
+  }, [langCode]);
 
   const addNarration = useCallback((message) => {
     setNarrations(prev => [{ message, id: Date.now() }, ...prev].slice(0, 20));
@@ -51,7 +94,7 @@ export default function App() {
   const handleEvent = useCallback((event) => {
     const data = JSON.parse(event.data);
     switch (data.type) {
-      case "live_url": setLiveUrl(data.url); break;
+      case "live_url":   setLiveUrl(data.url); break;
       case "processing": setStatus("processing"); addNarration(data.message); break;
       case "narration":  setStatus("working");    addNarration(data.message); break;
       case "confirmation_required":
@@ -79,11 +122,16 @@ export default function App() {
     if (busyRef.current) return;
     busyRef.current = true;
     setStatus("processing"); setNarrations([]); setConfirmation(null); setLiveUrl(null);
+    // Clear speech queue for new task
+    synthRef.current.cancel();
+    speakQueueRef.current = [];
+    isSpeakingRef.current = false;
+
     try {
       const res = await fetch(`${API}/api/task`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spoken_request: spokenRequest }),
+        body: JSON.stringify({ spoken_request: spokenRequest, language: langCode }),
       });
       const { task_id } = await res.json();
       setTaskId(task_id);
@@ -95,7 +143,7 @@ export default function App() {
       setStatus("idle"); busyRef.current = false;
       addNarration("I'm sorry, I couldn't connect. Please make sure the app is running and try again.");
     }
-  }, [handleEvent, addNarration]);
+  }, [handleEvent, addNarration, langCode]);
 
   useEffect(() => {
     if (eventSourceRef.current) eventSourceRef.current.onmessage = handleEvent;
@@ -125,14 +173,19 @@ export default function App() {
           </div>
         </div>
 
-        {/* Mic moves into topbar when browser is active */}
         {liveUrl && (
           <div className="topbar-mic">
-            <VoiceButton status={status} onTranscript={startTask} onListenStart={() => setStatus("listening")} />
+            <VoiceButton
+              status={status}
+              onTranscript={startTask}
+              onListenStart={() => setStatus("listening")}
+              langCode={langCode}
+            />
           </div>
         )}
 
         <div className="topbar-right">
+          <LanguageSelector value={langCode} onChange={setLangCode} />
           <StatusDisplay status={status} />
         </div>
       </header>
@@ -140,10 +193,11 @@ export default function App() {
       <main className="main-content">
         {liveUrl ? (
           <div className="split-layout">
-            {/* Left: full-height browser, no voice row */}
             <div className="split-left">
               <div className="live-browser-wrap">
-                <div className="live-browser-label"><span className="live-dot" />Live browser</div>
+                <div className="live-browser-label">
+                  <span className="live-dot" />Live browser
+                </div>
                 <iframe
                   src={liveUrl}
                   className="live-browser-frame"
@@ -152,7 +206,6 @@ export default function App() {
                 />
               </div>
             </div>
-            {/* Right: narrations */}
             <div className="split-right">
               <div className="split-right-header">What I'm doing</div>
               <NarrationFeed narrations={narrations} />
@@ -161,8 +214,17 @@ export default function App() {
         ) : (
           <div className="center-col">
             <div className="center-hero">
-              <VoiceButton status={status} onTranscript={startTask} onListenStart={() => setStatus("listening")} />
-              {narrations.length === 0 && <p className="idle-hint">Tap the button and tell me what you need</p>}
+              <VoiceButton
+                status={status}
+                onTranscript={startTask}
+                onListenStart={() => setStatus("listening")}
+                langCode={langCode}
+              />
+              {narrations.length === 0 && (
+                <p className="idle-hint">
+                  {LANGUAGES.find(l => l.code === langCode)?.hint || "Tap the button and tell me what you need"}
+                </p>
+              )}
             </div>
             {narrations.length > 0 && (
               <div className="narration-list">
@@ -176,7 +238,9 @@ export default function App() {
       <div className="demo-tray">
         <span className="demo-label">Demo presets</span>
         {DEMO_TASKS.map(d => (
-          <button key={d.label} className="demo-btn" onClick={() => startTask(d.task)}>{d.label}</button>
+          <button key={d.label} className="demo-btn" onClick={() => startTask(d.task)}>
+            {d.label}
+          </button>
         ))}
       </div>
 
@@ -185,6 +249,7 @@ export default function App() {
           message={confirmation.message}
           onConfirm={() => handleConfirm(true)}
           onReject={() => handleConfirm(false)}
+          langCode={langCode}
         />
       )}
     </div>

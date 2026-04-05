@@ -1,9 +1,9 @@
 const STATUS_CONFIG = {
-  idle:       { dot: "#22c55e", text: "Ready" },
-  listening:  { dot: "#ef4444", text: "Listening" },
+  idle:       { dot: "#16a34a", text: "Ready" },
+  listening:  { dot: "#dc2626", text: "Listening" },
   processing: { dot: "#3b82f6", text: "Working" },
   working:    { dot: "#3b82f6", text: "Working" },
-  waiting:    { dot: "#f59e0b", text: "Need your help" },
+  waiting:    { dot: "#d97706", text: "Need your help" },
 };
 
 export default function StatusDisplay({ status }) {

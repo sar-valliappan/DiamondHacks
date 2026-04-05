@@ -1,7 +1,11 @@
 """
 simplifier.py — Narrationifier class
-Translates technical browser-use agent output into warm, plain English narration
+Translates technical browser-use agent output into warm, plain-language narration
 that a grandparent would understand. Powered by Gemini gemini-2.5-flash.
+
+Now multilingual: every public method accepts an optional `language` parameter
+(BCP-47 tag, e.g. "es-US", "zh-CN"). When provided, Gemini responds in that
+language so all narration/confirmation text matches what the user speaks.
 """
 
 import os
@@ -28,31 +32,59 @@ _STOP_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-_SYSTEM_PERSONA = (
+_BASE_PERSONA = (
     "You are the voice of Navigator, a friendly web assistant helping elderly people "
     "and people who struggle with technology. You speak in warm, simple, reassuring language — "
     "like a helpful neighbor, not a computer. Keep responses to 1-2 short sentences. "
     "Never use technical jargon. Use first person ('I'm...'). Be calm and positive."
 )
 
+# Human-readable language names for the prompt, keyed by BCP-47 base tag
+_LANG_NAMES = {
+    "en": "English",
+    "es": "Spanish",
+    "zh": "Chinese (Simplified)",
+    "fr": "French",
+    "de": "German",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "pt": "Portuguese",
+    "ar": "Arabic",
+    "hi": "Hindi",
+    "vi": "Vietnamese",
+    "tl": "Filipino (Tagalog)",
+}
+
+
+def _build_system_persona(language: str = "en-US") -> str:
+    base = language.split("-")[0].lower()
+    lang_name = _LANG_NAMES.get(base, "English")
+    if base == "en":
+        return _BASE_PERSONA
+    return (
+        _BASE_PERSONA
+        + f" IMPORTANT: You MUST respond entirely in {lang_name}. "
+        f"Do not use any English in your response."
+    )
+
 
 class Narrationifier:
-    """Translates technical agent actions into warm plain-English narration."""
+    """Translates technical agent actions into warm plain-language narration."""
 
     def __init__(self):
         api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not api_key:
             raise ValueError("GEMINI_API_KEY environment variable is not set.")
-        # Set GOOGLE_API_KEY too so langchain picks it up
         os.environ["GOOGLE_API_KEY"] = api_key
         self._client = genai.Client(api_key=api_key)
         self._model = "gemini-2.5-flash"
 
-    def _ask(self, prompt: str) -> str:
+    def _ask(self, prompt: str, language: str = "en-US") -> str:
         """Send a prompt to Gemini and return the text response."""
+        system_persona = _build_system_persona(language)
         response = self._client.models.generate_content(
             model=self._model,
-            contents=f"{_SYSTEM_PERSONA}\n\n{prompt}",
+            contents=f"{system_persona}\n\n{prompt}",
             config=types.GenerateContentConfig(
                 temperature=0.3,
                 max_output_tokens=500,
@@ -60,28 +92,40 @@ class Narrationifier:
         )
         return response.text.strip()
 
-    def simplify_action(self, technical_action: str) -> str:
+    def simplify_action(self, technical_action: str, language: str = "en-US") -> str:
         """
-        Convert a technical browser action into plain English.
-        e.g. "clicking element #btn-submit at coordinates 450,230"
-             -> "I'm clicking the Submit button for you"
+        Convert a technical browser action into a natural human update.
+        Only narrates things the user actually cares about — skips trivial steps.
+        Returns empty string "" if the action is too minor to mention.
         """
         prompt = (
-            f"A browser assistant is performing this technical action:\n"
+            "A browser assistant just did this:\n"
             f'"{technical_action}"\n\n'
-            f"Translate this into one short, friendly sentence a grandparent would understand. "
-            f"Start with 'I'm' or 'I just' or 'Now I'm'. "
-            f"Do NOT mention coordinates, element IDs, CSS selectors, or any technical terms."
+            "Return exactly SKIP if it is: opening/loading a page, basic navigation, "
+            "a generic setup step, or very similar to something just said.\n\n"
+            "Otherwise write ONE short casual sentence. Hard rules:\n"
+            "NEVER start with I'm or I am — completely banned.\n"
+            "Use varied openers: Found..., Got..., Looks like..., Filling in..., "
+            "Spotted..., Selecting..., Almost there —, Pulling up..., "
+            "Searching for..., On the page now, Tapping..., Reading..., That's done.\n"
+            "Sound like a person helping, not a machine logging. "
+            "No exclamation marks. No filler words like just or now. Short and direct.\n\n"
+            "Good: 'Found the refill form, filling it in'\n"
+            "Good: 'Your balance is $127 — selecting your saved bank account'\n"
+            "Good: 'Pulling up the Medicare doctor finder'\n"
+            "Bad: 'I am now navigating to the pharmacy section of the website'"
         )
         try:
-            return self._ask(prompt)
+            result = self._ask(prompt, language).strip()
+            # If Gemini says skip, return empty string — caller should not yield this
+            if result.upper().startswith("SKIP"):
+                return ""
+            return result
         except Exception:
-            return "I'm working on the next step for you..."
+            return ""
 
-    def simplify_result(self, technical_result: str) -> str:
-        """
-        Convert raw agent output into a plain English summary.
-        """
+    def simplify_result(self, technical_result: str, language: str = "en-US") -> str:
+        """Convert raw agent output into a plain language summary."""
         truncated = technical_result[:3000] if len(technical_result) > 3000 else technical_result
         prompt = (
             f"A browser assistant just completed a task. Here is the raw output:\n"
@@ -91,14 +135,14 @@ class Narrationifier:
             f"Focus on what matters to the person, not technical details."
         )
         try:
-            return self._ask(prompt)
+            return self._ask(prompt, language)
         except Exception:
             return "I've finished that step. Let me know what you'd like to do next."
 
-    def generate_confirmation_request(self, action: str, context: str) -> str:
-        """
-        Generate a friendly confirmation question for a risky action.
-        """
+    def generate_confirmation_request(
+        self, action: str, context: str, language: str = "en-US"
+    ) -> str:
+        """Generate a friendly confirmation question for a risky action."""
         prompt = (
             f"A browser assistant is about to do something that cannot be undone:\n"
             f"Action: {action}\n"
@@ -109,7 +153,7 @@ class Narrationifier:
             f"Keep it to 1-2 sentences. No technical jargon."
         )
         try:
-            return self._ask(prompt)
+            return self._ask(prompt, language)
         except Exception:
             return f"I'm about to {action}. Shall I go ahead?"
 
@@ -117,6 +161,7 @@ class Narrationifier:
         """
         Classify the risk of an action.
         Returns: "safe" | "confirm_needed" | "stop"
+        Risk classification is always done in English (it's internal logic, not user-facing).
         """
         action_lower = action.lower()
 
@@ -136,7 +181,8 @@ class Narrationifier:
             f"Respond with ONLY one word: safe, confirm_needed, or stop."
         )
         try:
-            result = self._ask(prompt).strip().lower()
+            # Risk classification always in English — it's an internal decision
+            result = self._ask(prompt, language="en-US").strip().lower()
             if result in ("safe", "confirm_needed", "stop"):
                 return result
         except Exception:
@@ -144,10 +190,8 @@ class Narrationifier:
 
         return "safe"
 
-    def clean_voice_transcript(self, raw_transcript: str) -> str:
-        """
-        Clean up imperfect speech-to-text transcript into a clear instruction.
-        """
+    def clean_voice_transcript(self, raw_transcript: str, language: str = "en-US") -> str:
+        """Clean up imperfect speech-to-text transcript into a clear instruction."""
         prompt = (
             f"A speech-to-text system recorded this from a user:\n"
             f'"{raw_transcript}"\n\n'
@@ -156,11 +200,12 @@ class Narrationifier:
             f"Keep the user's intent. Return just the cleaned instruction, nothing else."
         )
         try:
-            return self._ask(prompt)
+            # Return the cleaned transcript in the same language it was spoken
+            return self._ask(prompt, language)
         except Exception:
             return raw_transcript
 
-    def friendly_error(self, technical_error: str) -> str:
+    def friendly_error(self, technical_error: str, language: str = "en-US") -> str:
         """Convert a technical error into a friendly message."""
         prompt = (
             f"A web assistant encountered this error:\n"
@@ -170,33 +215,32 @@ class Narrationifier:
             f"Be warm and reassuring."
         )
         try:
-            return self._ask(prompt)
+            return self._ask(prompt, language)
         except Exception:
             return "I'm sorry, something went wrong. Please tap the button and try again."
 
 
 # ─── Standalone test ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("Testing Narrationifier...\n")
+    print("Testing Narrationifier (English + Spanish)...\n")
     n = Narrationifier()
 
-    tests = [
+    tests_en = [
         ("simplify_action", "clicking element #btn-submit-prescription at coordinates 450,230"),
         ("simplify_action", "navigating to https://www.cvs.com/pharmacy/rx-history"),
-        ("simplify_action", "typing 'John Smith' into input[name='patient_name']"),
-        ("simplify_result", "HTTP 200 OK. Form submitted. Response: {'status': 'success', 'refill_id': 'RX-8821', 'medication': 'Lisinopril 10mg', 'pickup_date': '2026-04-06'}"),
-        ("generate_confirmation_request", "submit prescription refill form", "Medication: Lisinopril 10mg, Quantity: 30 tablets, Pharmacy: CVS on Main St"),
-        ("classify_action_risk", "clicking the Search button"),
-        ("classify_action_risk", "submitting the checkout form with credit card"),
-        ("classify_action_risk", "entering password into login form on unknown-site.biz"),
-        ("clean_voice_transcript", "um I want to uh refill my the prescription for my heart medicine"),
+        ("simplify_result", "HTTP 200 OK. Form submitted. Response: {'status': 'success', 'refill_id': 'RX-8821', 'medication': 'Lisinopril 10mg'}"),
+        ("generate_confirmation_request", "submit prescription refill form", "Medication: Lisinopril 10mg, Quantity: 30 tablets"),
         ("friendly_error", "ConnectionRefusedError: [Errno 111] Connection refused at port 9222"),
     ]
 
-    for method, *args in tests:
+    print("── English ──────────────────────────────────")
+    for method, *args in tests_en:
         fn = getattr(n, method)
-        result = fn(*args)
-        print(f"[{method}]")
-        print(f"  IN:  {args[0][:80]}")
-        print(f"  OUT: {result}")
-        print()
+        result = fn(*args, language="en-US")
+        print(f"[{method}]\n  IN:  {args[0][:70]}\n  OUT: {result}\n")
+
+    print("── Spanish ──────────────────────────────────")
+    for method, *args in tests_en:
+        fn = getattr(n, method)
+        result = fn(*args, language="es-US")
+        print(f"[{method}]\n  IN:  {args[0][:70]}\n  OUT: {result}\n")

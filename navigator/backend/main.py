@@ -7,7 +7,7 @@ import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -21,7 +21,6 @@ from agent_runner import NavigatorAgent
 load_dotenv()
 
 # ─── Shared state ──────────────────────────────────────────────────────────────
-# In production you'd use Redis; for hackathon single-process is fine.
 
 _agent = NavigatorAgent()
 
@@ -37,7 +36,6 @@ _task_handles: dict[str, asyncio.Task] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
-    # Clean up any running tasks on shutdown
     for task in _task_handles.values():
         task.cancel()
 
@@ -56,6 +54,7 @@ app.add_middleware(
 
 class TaskRequest(BaseModel):
     spoken_request: str
+    language: Optional[str] = "en-US"   # BCP-47 tag e.g. "es-US", "zh-CN"
 
 
 class ConfirmRequest(BaseModel):
@@ -68,16 +67,15 @@ class TaskResponse(BaseModel):
 
 # ─── Background task runner ────────────────────────────────────────────────────
 
-async def _run_agent_task(task_id: str, spoken_request: str):
+async def _run_agent_task(task_id: str, spoken_request: str, language: str = "en-US"):
     """Runs the agent and pushes events into the task's queue."""
     queue = _task_queues[task_id]
     try:
-        async for event in _agent.run(spoken_request, task_id):
+        async for event in _agent.run(spoken_request, task_id, language=language):
             await queue.put(event)
     except Exception as exc:
         await queue.put({"type": "error", "message": f"Unexpected error: {exc}"})
     finally:
-        # Sentinel: signals the SSE generator to close
         await queue.put(None)
 
 
@@ -98,7 +96,7 @@ async def start_task(body: TaskRequest):
     _task_queues[task_id] = asyncio.Queue()
 
     bg_task = asyncio.create_task(
-        _run_agent_task(task_id, body.spoken_request),
+        _run_agent_task(task_id, body.spoken_request, language=body.language or "en-US"),
         name=f"navigator-{task_id}",
     )
     _task_handles[task_id] = bg_task
@@ -118,7 +116,6 @@ async def stream_task(task_id: str):
             while True:
                 event = await asyncio.wait_for(queue.get(), timeout=60.0)
                 if event is None:
-                    # Task finished
                     yield {"data": json.dumps({"type": "stream_end"})}
                     break
                 yield {"data": json.dumps(event)}
