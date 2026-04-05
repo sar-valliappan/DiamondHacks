@@ -8,7 +8,7 @@ import SimplifiedView from "./components/SimplifiedView";
 import LandingPage from "./components/LandingPage";
 import ResultCard from "./components/ResultCard";
 
-const API = "";
+const API = import.meta.env.VITE_API_URL || "";
 
 const DEMO_TASKS = [
   { label: "💊 Refill Prescription", task: "I need to refill my prescription on CVS pharmacy website" },
