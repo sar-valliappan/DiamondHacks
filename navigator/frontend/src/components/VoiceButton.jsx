@@ -1,64 +1,108 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 
 export default function VoiceButton({ status, onTranscript, onListenStart }) {
-  const recognitionRef = useRef(null);
+  const recognitionRef   = useRef(null);
+  const finalTranscript  = useRef("");
+  const silenceTimer     = useRef(null);
   const [error, setError] = useState(null);
 
   const isListening = status === "listening";
-  const isWorking = status === "processing" || status === "working";
-  const isWaiting = status === "waiting";
-  const isIdle = status === "idle";
+  const isWorking   = status === "processing" || status === "working";
+  const isWaiting   = status === "waiting";
+  const isIdle      = status === "idle";
+
+  // Submit whatever we've heard so far and stop
+  const submitAndStop = useCallback(() => {
+    clearTimeout(silenceTimer.current);
+    try { recognitionRef.current?.stop(); } catch {}
+    const text = finalTranscript.current.trim();
+    finalTranscript.current = "";
+    if (text) onTranscript(text);
+  }, [onTranscript]);
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setError("Voice not supported — use Chrome");
-      return;
-    }
+    if (!SpeechRecognition) { setError("Voice not supported — use Chrome"); return; }
+
     const rec = new SpeechRecognition();
-    rec.continuous = false;
-    rec.interimResults = false;
-    rec.lang = "en-US";
+    rec.continuous     = true;
+    rec.interimResults = true;
+    rec.lang           = "en-US";
 
     rec.onresult = (e) => {
-      const transcript = e.results[0][0].transcript;
-      onTranscript(transcript);
+      // Reset silence timer every time speech comes in
+      clearTimeout(silenceTimer.current);
+
+      let final = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += e.results[i][0].transcript + " ";
+      }
+      if (final.trim()) finalTranscript.current += final;
+
+      // Auto-submit 1.5s after last speech detected
+      silenceTimer.current = setTimeout(() => {
+        submitAndStop();
+      }, 1500);
     };
+
     rec.onerror = (e) => {
+      clearTimeout(silenceTimer.current);
       if (e.error === "not-allowed") {
         setError("Microphone access denied — check browser settings");
-      } else if (e.error !== "no-speech") {
-        setError("Couldn't hear you. Please try again.");
+      } else if (e.error === "no-speech") {
+        // Timed out with nothing — just stop cleanly
+        const text = finalTranscript.current.trim();
+        finalTranscript.current = "";
+        if (text) onTranscript(text);
+      } else if (e.error !== "aborted") {
+        setError("Couldn't hear you. Try again.");
         setTimeout(() => setError(null), 3000);
       }
     };
-    rec.onend = () => {};
-    recognitionRef.current = rec;
-  }, [onTranscript]);
 
-  const handleClick = () => {
+    rec.onend = () => {
+      clearTimeout(silenceTimer.current);
+      const text = finalTranscript.current.trim();
+      finalTranscript.current = "";
+      if (text) onTranscript(text);
+    };
+
+    recognitionRef.current = rec;
+  }, [onTranscript, submitAndStop]);
+
+  const handleClick = useCallback(() => {
     if (!isIdle) return;
     setError(null);
+    finalTranscript.current = "";
+    clearTimeout(silenceTimer.current);
     try {
       recognitionRef.current?.start();
       onListenStart();
     } catch {
       setError("Couldn't start microphone. Please try again.");
     }
-  };
+  }, [isIdle, onListenStart]);
+
+  // If status flips away from listening externally, stop the mic
+  useEffect(() => {
+    if (!isListening) {
+      clearTimeout(silenceTimer.current);
+      try { recognitionRef.current?.stop(); } catch {}
+    }
+  }, [isListening]);
 
   const getLabel = () => {
-    if (error) return error;
+    if (error)       return error;
     if (isListening) return "I'm listening...";
-    if (isWorking) return "Working on it...";
-    if (isWaiting) return "I need your help";
+    if (isWorking)   return "Working on it...";
+    if (isWaiting)   return "I need your help";
     return "Tap to speak";
   };
 
   const getBtnClass = () => {
     if (isListening) return "voice-btn listening";
-    if (isWorking) return "voice-btn working";
-    if (isWaiting) return "voice-btn waiting";
+    if (isWorking)   return "voice-btn working";
+    if (isWaiting)   return "voice-btn waiting";
     return "voice-btn idle";
   };
 

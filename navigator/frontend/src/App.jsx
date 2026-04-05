@@ -13,36 +13,33 @@ const DEMO_TASKS = [
 ];
 
 export default function App() {
-  const [status, setStatus] = useState("idle");
-  const [narrations, setNarrations] = useState([]);
+  const [status, setStatus]           = useState("idle");
+  const [narrations, setNarrations]   = useState([]);
   const [confirmation, setConfirmation] = useState(null);
-  const [taskId, setTaskId] = useState(null);
-  const [liveUrl, setLiveUrl] = useState(null);
+  const [taskId, setTaskId]           = useState(null);
+  const [liveUrl, setLiveUrl]         = useState(null);
   const eventSourceRef = useRef(null);
-  const synthRef = useRef(window.speechSynthesis);
-  const voicesRef = useRef([]);
-  const busyRef = useRef(false);
+  const synthRef       = useRef(window.speechSynthesis);
+  const voicesRef      = useRef([]);
+  const busyRef        = useRef(false);
 
   useEffect(() => {
-    const loadVoices = () => { voicesRef.current = synthRef.current.getVoices(); };
-    loadVoices();
-    synthRef.current.onvoiceschanged = loadVoices;
+    const load = () => { voicesRef.current = synthRef.current.getVoices(); };
+    load();
+    synthRef.current.onvoiceschanged = load;
   }, []);
 
   const speak = useCallback((text) => {
     if (!text) return;
     synthRef.current.cancel();
     const utt = new SpeechSynthesisUtterance(text);
-    utt.rate = 0.85;
-    utt.pitch = 1.0;
-    const voices = voicesRef.current;
-    const preferred =
-      voices.find(v => v.name.includes("Google US English")) ||
-      voices.find(v => v.name === "Samantha") ||
-      voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("female")) ||
-      voices.find(v => v.lang.startsWith("en")) ||
-      voices[0];
-    if (preferred) utt.voice = preferred;
+    utt.rate = 0.85; utt.pitch = 1.0;
+    const v = voicesRef.current;
+    const voice =
+      v.find(x => x.name.includes("Google US English")) ||
+      v.find(x => x.name === "Samantha") ||
+      v.find(x => x.lang.startsWith("en")) || v[0];
+    if (voice) utt.voice = voice;
     synthRef.current.speak(utt);
   }, []);
 
@@ -54,54 +51,34 @@ export default function App() {
   const handleEvent = useCallback((event) => {
     const data = JSON.parse(event.data);
     switch (data.type) {
-      case "live_url":
-        setLiveUrl(data.url);
-        break;
-      case "processing":
-        setStatus("processing");
-        addNarration(data.message);
-        break;
-      case "narration":
-        setStatus("working");
-        addNarration(data.message);
-        break;
+      case "live_url": setLiveUrl(data.url); break;
+      case "processing": setStatus("processing"); addNarration(data.message); break;
+      case "narration":  setStatus("working");    addNarration(data.message); break;
       case "confirmation_required":
         setStatus("waiting");
         setConfirmation({ message: data.message, taskId });
         speak(data.message);
         break;
-      case "confirmation_received":
-        setStatus("working");
-        setConfirmation(null);
-        break;
+      case "confirmation_received": setStatus("working"); setConfirmation(null); break;
       case "completed":
-        setStatus("idle");
-        addNarration(data.message);
-        setTaskId(null);
+        setStatus("idle"); addNarration(data.message); setTaskId(null);
         busyRef.current = false;
-        if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
+        eventSourceRef.current?.close(); eventSourceRef.current = null;
         break;
       case "error":
         setStatus("idle");
         addNarration(data.message || "Something went wrong. Please try again.");
-        setTaskId(null);
-        busyRef.current = false;
-        if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
+        setTaskId(null); busyRef.current = false;
+        eventSourceRef.current?.close(); eventSourceRef.current = null;
         break;
-      case "stream_end":
-        if (status !== "idle") setStatus("idle");
-        break;
+      case "stream_end": if (status !== "idle") setStatus("idle"); break;
     }
   }, [taskId, addNarration, speak, status]);
 
   const startTask = useCallback(async (spokenRequest) => {
     if (busyRef.current) return;
     busyRef.current = true;
-    setStatus("processing");
-    setNarrations([]);
-    setConfirmation(null);
-    setLiveUrl(null);
-
+    setStatus("processing"); setNarrations([]); setConfirmation(null); setLiveUrl(null);
     try {
       const res = await fetch(`${API}/api/task`, {
         method: "POST",
@@ -110,43 +87,31 @@ export default function App() {
       });
       const { task_id } = await res.json();
       setTaskId(task_id);
-
       const es = new EventSource(`${API}/api/stream/${task_id}`);
       eventSourceRef.current = es;
       es.onmessage = handleEvent;
-      es.onerror = () => {
-        setStatus("idle");
-        busyRef.current = false;
-        es.close();
-        eventSourceRef.current = null;
-      };
+      es.onerror = () => { setStatus("idle"); busyRef.current = false; es.close(); eventSourceRef.current = null; };
     } catch {
-      setStatus("idle");
-      busyRef.current = false;
+      setStatus("idle"); busyRef.current = false;
       addNarration("I'm sorry, I couldn't connect. Please make sure the app is running and try again.");
     }
   }, [handleEvent, addNarration]);
 
   useEffect(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.onmessage = handleEvent;
-    }
+    if (eventSourceRef.current) eventSourceRef.current.onmessage = handleEvent;
   }, [handleEvent]);
 
   const handleConfirm = useCallback(async (confirmed) => {
     const tid = confirmation?.taskId || taskId;
     if (!tid) return;
-    setConfirmation(null);
-    setStatus("working");
+    setConfirmation(null); setStatus("working");
     try {
       await fetch(`${API}/api/confirm/${tid}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ confirmed }),
       });
-    } catch {
-      addNarration("Something went wrong. Please try again.");
-    }
+    } catch { addNarration("Something went wrong. Please try again."); }
   }, [confirmation, taskId, addNarration]);
 
   return (
@@ -159,6 +124,14 @@ export default function App() {
             <div className="logo-sub">Your helper on the web</div>
           </div>
         </div>
+
+        {/* Mic moves into topbar when browser is active */}
+        {liveUrl && (
+          <div className="topbar-mic">
+            <VoiceButton status={status} onTranscript={startTask} onListenStart={() => setStatus("listening")} />
+          </div>
+        )}
+
         <div className="topbar-right">
           <StatusDisplay status={status} />
         </div>
@@ -166,17 +139,11 @@ export default function App() {
 
       <main className="main-content">
         {liveUrl ? (
-          /* ── Split view: browser left, narrations right ── */
           <div className="split-layout">
+            {/* Left: full-height browser, no voice row */}
             <div className="split-left">
-              <div className="split-voice-row">
-                <VoiceButton status={status} onTranscript={startTask} onListenStart={() => setStatus("listening")} />
-              </div>
               <div className="live-browser-wrap">
-                <div className="live-browser-label">
-                  <span className="live-dot" />
-                  Live browser
-                </div>
+                <div className="live-browser-label"><span className="live-dot" />Live browser</div>
                 <iframe
                   src={liveUrl}
                   className="live-browser-frame"
@@ -185,16 +152,23 @@ export default function App() {
                 />
               </div>
             </div>
+            {/* Right: narrations */}
             <div className="split-right">
               <div className="split-right-header">What I'm doing</div>
               <NarrationFeed narrations={narrations} />
             </div>
           </div>
         ) : (
-          /* ── Centered idle view ── */
           <div className="center-col">
-            <VoiceButton status={status} onTranscript={startTask} onListenStart={() => setStatus("listening")} />
-            <NarrationFeed narrations={narrations} />
+            <div className="center-hero">
+              <VoiceButton status={status} onTranscript={startTask} onListenStart={() => setStatus("listening")} />
+              {narrations.length === 0 && <p className="idle-hint">Tap the button and tell me what you need</p>}
+            </div>
+            {narrations.length > 0 && (
+              <div className="narration-list">
+                <NarrationFeed narrations={narrations} />
+              </div>
+            )}
           </div>
         )}
       </main>
@@ -202,9 +176,7 @@ export default function App() {
       <div className="demo-tray">
         <span className="demo-label">Demo presets</span>
         {DEMO_TASKS.map(d => (
-          <button key={d.label} className="demo-btn" onClick={() => startTask(d.task)}>
-            {d.label}
-          </button>
+          <button key={d.label} className="demo-btn" onClick={() => startTask(d.task)}>{d.label}</button>
         ))}
       </div>
 
