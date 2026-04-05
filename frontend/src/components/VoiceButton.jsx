@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 
+const MAX_LISTEN_MS = 10000; // hard cutoff — never listens forever
+
 export default function VoiceButton({ status, onTranscript, onListenStart, langCode = "en-US" }) {
   const recognitionRef  = useRef(null);
   const finalTranscript = useRef("");
   const silenceTimer    = useRef(null);
+  const maxTimer        = useRef(null);
   const [error, setError] = useState(null);
 
   const isListening = status === "listening";
@@ -11,8 +14,13 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
   const isWaiting   = status === "waiting";
   const isIdle      = status === "idle";
 
-  const submitAndStop = useCallback(() => {
+  const clearTimers = () => {
     clearTimeout(silenceTimer.current);
+    clearTimeout(maxTimer.current);
+  };
+
+  const submitAndStop = useCallback(() => {
+    clearTimers();
     try { recognitionRef.current?.stop(); } catch {}
     const text = finalTranscript.current.trim();
     finalTranscript.current = "";
@@ -24,7 +32,6 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) { setError("Voice not supported — use Chrome"); return; }
 
-    // Stop any existing session before recreating
     try { recognitionRef.current?.stop(); } catch {}
 
     const rec = new SpeechRecognition();
@@ -33,19 +40,23 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
     rec.lang           = langCode;
 
     rec.onresult = (e) => {
-      clearTimeout(silenceTimer.current);
-      let final = "";
+      let gotFinal = false;
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) final += e.results[i][0].transcript + " ";
+        if (e.results[i].isFinal) {
+          finalTranscript.current += e.results[i][0].transcript + " ";
+          gotFinal = true;
+        }
       }
-      if (final.trim()) finalTranscript.current += final;
 
-      // Auto-submit after 1.5s of silence
-      silenceTimer.current = setTimeout(() => { submitAndStop(); }, 1500);
+      // Only reset silence timer when we actually get final speech — not on every interim blip
+      if (gotFinal) {
+        clearTimeout(silenceTimer.current);
+        silenceTimer.current = setTimeout(submitAndStop, 1500);
+      }
     };
 
     rec.onerror = (e) => {
-      clearTimeout(silenceTimer.current);
+      clearTimers();
       if (e.error === "not-allowed") {
         setError("Microphone access denied — check browser settings");
       } else if (e.error === "no-speech") {
@@ -59,7 +70,7 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
     };
 
     rec.onend = () => {
-      clearTimeout(silenceTimer.current);
+      clearTimers();
       const text = finalTranscript.current.trim();
       finalTranscript.current = "";
       if (text) onTranscript(text);
@@ -72,18 +83,20 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
     if (!isIdle) return;
     setError(null);
     finalTranscript.current = "";
-    clearTimeout(silenceTimer.current);
+    clearTimers();
     try {
       recognitionRef.current?.start();
       onListenStart();
+      // Hard cutoff: if still listening after MAX_LISTEN_MS, force submit
+      maxTimer.current = setTimeout(submitAndStop, MAX_LISTEN_MS);
     } catch {
       setError("Couldn't start microphone. Please try again.");
     }
-  }, [isIdle, onListenStart]);
+  }, [isIdle, onListenStart, submitAndStop]);
 
   useEffect(() => {
     if (!isListening) {
-      clearTimeout(silenceTimer.current);
+      clearTimers();
       try { recognitionRef.current?.stop(); } catch {}
     }
   }, [isListening]);

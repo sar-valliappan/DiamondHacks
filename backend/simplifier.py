@@ -92,22 +92,33 @@ class Narrationifier:
         )
         return response.text.strip()
 
-    def simplify_action(self, technical_action: str, language: str = "en-US") -> str:
+    def simplify_action(
+        self, technical_action: str, language: str = "en-US", recent: list[str] | None = None
+    ) -> str:
         """
         Convert a technical browser action into a natural human update.
         Only narrates things the user actually cares about — skips trivial steps.
         Returns empty string "" if the action is too minor to mention.
+        `recent` is a list of the last 3 narrations already spoken, used to avoid repetition.
         """
+        recent_block = ""
+        if recent:
+            recent_lines = "\n".join(f'  - "{r}"' for r in recent[:3])
+            recent_block = (
+                f"\nThese were already said — do NOT repeat the same idea:\n{recent_lines}\n"
+            )
+
         prompt = (
             "A browser assistant just did this:\n"
-            f'"{technical_action}"\n\n'
+            f'"{technical_action}"\n'
+            f"{recent_block}\n"
             "Return exactly SKIP if it is: opening/loading a page, basic navigation, "
-            "a generic setup step, or very similar to something just said.\n\n"
+            "a generic setup step, or conveys the same meaning as something already said above.\n\n"
             "Otherwise write ONE short casual sentence. Hard rules:\n"
             "NEVER start with I'm or I am — completely banned.\n"
             "Use varied openers: Found..., Got..., Looks like..., Filling in..., "
             "Spotted..., Selecting..., Almost there —, Pulling up..., "
-            "Searching for..., On the page now, Tapping..., Reading..., That's done.\n"
+            "On the page now, Tapping..., Reading..., That's done.\n"
             "Sound like a person helping, not a machine logging. "
             "No exclamation marks. No filler words like just or now. Short and direct.\n\n"
             "Good: 'Found the refill form, filling it in'\n"
@@ -117,7 +128,6 @@ class Narrationifier:
         )
         try:
             result = self._ask(prompt, language).strip()
-            # If Gemini says skip, return empty string — caller should not yield this
             if result.upper().startswith("SKIP"):
                 return ""
             return result

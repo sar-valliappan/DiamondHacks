@@ -110,11 +110,12 @@ class NavigatorAgent:
                 # 3. Poll for steps — narration runs concurrently so LLM never blocks the loop
                 seen_steps: set[int] = set()
                 pending_narrations: list[asyncio.Task] = []
+                recent_narrations: list[str] = []  # last 3 spoken narrations for dedup
 
-                async def _narrate_step(raw_action: str, lang: str):
+                async def _narrate_step(raw_action: str, lang: str, recent: list[str]):
                     """Returns a narration event or None if skipped."""
                     text = await asyncio.get_event_loop().run_in_executor(
-                        None, self._simplifier.simplify_action, raw_action, lang
+                        None, lambda: self._simplifier.simplify_action(raw_action, lang, recent)
                     )
                     return _event("narration", message=text) if text else None
 
@@ -128,6 +129,9 @@ class NavigatorAgent:
                             result = t.result()
                             if result:
                                 yield result
+                                recent_narrations.insert(0, result["message"])
+                                if len(recent_narrations) > 3:
+                                    recent_narrations.pop()
                         else:
                             still_pending.append(t)
                     pending_narrations = still_pending
@@ -200,7 +204,9 @@ class NavigatorAgent:
                             )
                             yield _event("narration", message="Got it, going ahead.")
 
-                        narration_task = asyncio.create_task(_narrate_step(raw, language))
+                        narration_task = asyncio.create_task(
+                            _narrate_step(raw, language, list(recent_narrations))
+                        )
                         pending_narrations.append(narration_task)
 
                     if status in ("finished", "stopped"):
@@ -234,25 +240,96 @@ class NavigatorAgent:
         self, request: str, task_id: str, language: str = "en-US"
     ) -> AsyncGenerator[dict, None]:
         req = request.lower()
-        if any(w in req for w in ["prescription", "cvs", "refill", "medication", "medicine", "pharmacy"]):
+        if any(w in req for w in [
+            # English
+            "prescription", "cvs", "refill", "medication", "medicine", "pharmacy",
+            # Spanish
+            "receta", "medicamento", "farmacia", "medicación", "medicina",
+            # Chinese
+            "处方", "药店", "药品", "配药",
+            # French
+            "ordonnance", "pharmacie", "médicament",
+            # German
+            "rezept", "apotheke", "medikament",
+            # Japanese
+            "処方", "薬局", "薬",
+            # Korean
+            "처방", "약국", "약",
+            # Portuguese
+            "receita", "farmácia", "medicamento",
+            # Hindi
+            "नुस्खा", "दवाखाना", "दवा",
+            # Arabic
+            "وصفة", "صيدلية", "دواء",
+        ]):
             steps = _PRESCRIPTION_STEPS
             summary_context = "Prescription refill requested successfully at CVS Pharmacy"
-        elif any(w in req for w in ["bill", "electricity", "sdg&e", "sdge", "utility", "pay"]):
+        elif any(w in req for w in [
+            # English
+            "bill", "electricity", "sdg&e", "sdge", "utility", "pay",
+            # Spanish
+            "factura", "electricidad", "pagar", "pago", "recibo",
+            # Chinese
+            "账单", "电费", "付款", "缴费",
+            # French
+            "facture", "électricité", "payer",
+            # German
+            "rechnung", "strom", "bezahlen",
+            # Japanese
+            "請求", "電気代", "支払",
+            # Korean
+            "청구서", "전기요금", "납부",
+            # Portuguese
+            "conta", "eletricidade", "pagar",
+            # Hindi
+            "बिल", "बिजली", "भुगतान",
+            # Arabic
+            "فاتورة", "كهرباء", "دفع",
+        ]):
             steps = _BILL_STEPS
             summary_context = "Electricity bill payment of $127.43 submitted to SDG&E"
-        elif any(w in req for w in ["doctor", "physician", "medicare", "appointment", "find"]):
+        elif any(w in req for w in [
+            # English
+            "doctor", "physician", "medicare", "appointment", "find",
+            # Spanish
+            "médico", "doctor", "cita", "médicos", "buscar",
+            # Chinese
+            "医生", "医院", "预约", "找",
+            # French
+            "médecin", "docteur", "rendez-vous", "trouver",
+            # German
+            "arzt", "doktor", "termin", "finden",
+            # Japanese
+            "医者", "医師", "予約", "探す",
+            # Korean
+            "의사", "병원", "예약", "찾다",
+            # Portuguese
+            "médico", "doutor", "consulta", "encontrar",
+            # Hindi
+            "डॉक्टर", "चिकित्सक", "अपॉइंटमेंट", "खोजें",
+            # Arabic
+            "طبيب", "دكتور", "موعد", "ابحث",
+            # Vietnamese
+            "bác sĩ", "cuộc hẹn", "tìm",
+            # Filipino
+            "doktor", "manggagamot", "appointment",
+        ]):
             steps = _DOCTOR_STEPS
             summary_context = "Found 3 Medicare-accepting doctors near San Diego"
         else:
             steps = _GENERIC_STEPS
             summary_context = f"Completed: {request}"
 
+        recent_demo: list[str] = []
         for step in steps:
             await asyncio.sleep(step.get("delay", 1.5))
             if step["type"] == "narration":
-                narration = self._simplifier.simplify_action(step["raw"], language=language)
+                narration = self._simplifier.simplify_action(step["raw"], language=language, recent=recent_demo)
                 if narration:
                     yield _event("narration", message=narration)
+                    recent_demo.insert(0, narration)
+                    if len(recent_demo) > 3:
+                        recent_demo.pop()
             elif step["type"] == "confirm":
                 question = self._simplifier.generate_confirmation_request(
                     step["action"], step["context"], language=language
