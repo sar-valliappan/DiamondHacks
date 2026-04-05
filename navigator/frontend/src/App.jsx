@@ -13,19 +13,18 @@ const DEMO_TASKS = [
 ];
 
 export default function App() {
-  const [status, setStatus] = useState("idle"); // idle | listening | processing | working | waiting
+  const [status, setStatus] = useState("idle");
   const [narrations, setNarrations] = useState([]);
-  const [confirmation, setConfirmation] = useState(null); // { message, taskId }
+  const [confirmation, setConfirmation] = useState(null);
   const [taskId, setTaskId] = useState(null);
+  const [liveUrl, setLiveUrl] = useState(null);
   const eventSourceRef = useRef(null);
   const synthRef = useRef(window.speechSynthesis);
   const voicesRef = useRef([]);
+  const busyRef = useRef(false);
 
-  // Load voices
   useEffect(() => {
-    const loadVoices = () => {
-      voicesRef.current = synthRef.current.getVoices();
-    };
+    const loadVoices = () => { voicesRef.current = synthRef.current.getVoices(); };
     loadVoices();
     synthRef.current.onvoiceschanged = loadVoices;
   }, []);
@@ -36,25 +35,28 @@ export default function App() {
     const utt = new SpeechSynthesisUtterance(text);
     utt.rate = 0.85;
     utt.pitch = 1.0;
-    // Pick best voice: prefer Google US English > Samantha > first English female
     const voices = voicesRef.current;
-    const preferred = voices.find(v => v.name.includes("Google US English"))
-      || voices.find(v => v.name === "Samantha")
-      || voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("female"))
-      || voices.find(v => v.lang.startsWith("en"))
-      || voices[0];
+    const preferred =
+      voices.find(v => v.name.includes("Google US English")) ||
+      voices.find(v => v.name === "Samantha") ||
+      voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("female")) ||
+      voices.find(v => v.lang.startsWith("en")) ||
+      voices[0];
     if (preferred) utt.voice = preferred;
     synthRef.current.speak(utt);
   }, []);
 
   const addNarration = useCallback((message) => {
-    setNarrations(prev => [{ message, id: Date.now() }, ...prev].slice(0, 5));
+    setNarrations(prev => [{ message, id: Date.now() }, ...prev].slice(0, 20));
     speak(message);
   }, [speak]);
 
   const handleEvent = useCallback((event) => {
     const data = JSON.parse(event.data);
     switch (data.type) {
+      case "live_url":
+        setLiveUrl(data.url);
+        break;
       case "processing":
         setStatus("processing");
         addNarration(data.message);
@@ -76,19 +78,15 @@ export default function App() {
         setStatus("idle");
         addNarration(data.message);
         setTaskId(null);
-        if (eventSourceRef.current) {
-          eventSourceRef.current.close();
-          eventSourceRef.current = null;
-        }
+        busyRef.current = false;
+        if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
         break;
       case "error":
         setStatus("idle");
         addNarration(data.message || "Something went wrong. Please try again.");
         setTaskId(null);
-        if (eventSourceRef.current) {
-          eventSourceRef.current.close();
-          eventSourceRef.current = null;
-        }
+        busyRef.current = false;
+        if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
         break;
       case "stream_end":
         if (status !== "idle") setStatus("idle");
@@ -97,9 +95,12 @@ export default function App() {
   }, [taskId, addNarration, speak, status]);
 
   const startTask = useCallback(async (spokenRequest) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setStatus("processing");
     setNarrations([]);
     setConfirmation(null);
+    setLiveUrl(null);
 
     try {
       const res = await fetch(`${API}/api/task`, {
@@ -115,16 +116,17 @@ export default function App() {
       es.onmessage = handleEvent;
       es.onerror = () => {
         setStatus("idle");
+        busyRef.current = false;
         es.close();
         eventSourceRef.current = null;
       };
     } catch {
       setStatus("idle");
+      busyRef.current = false;
       addNarration("I'm sorry, I couldn't connect. Please make sure the app is running and try again.");
     }
   }, [handleEvent, addNarration]);
 
-  // handleEvent changes when taskId changes, so we need to re-attach
   useEffect(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.onmessage = handleEvent;
@@ -149,7 +151,6 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      {/* Top bar — matches Browser Use header style */}
       <header className="topbar">
         <div className="topbar-left">
           <div className="logo-mark">N</div>
@@ -163,15 +164,41 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main content */}
       <main className="main-content">
-        <div className="center-col">
-          <VoiceButton status={status} onTranscript={startTask} onListenStart={() => setStatus("listening")} />
-          <NarrationFeed narrations={narrations} />
-        </div>
+        {liveUrl ? (
+          /* ── Split view: browser left, narrations right ── */
+          <div className="split-layout">
+            <div className="split-left">
+              <div className="split-voice-row">
+                <VoiceButton status={status} onTranscript={startTask} onListenStart={() => setStatus("listening")} />
+              </div>
+              <div className="live-browser-wrap">
+                <div className="live-browser-label">
+                  <span className="live-dot" />
+                  Live browser
+                </div>
+                <iframe
+                  src={liveUrl}
+                  className="live-browser-frame"
+                  title="Navigator live browser"
+                  allow="clipboard-read; clipboard-write"
+                />
+              </div>
+            </div>
+            <div className="split-right">
+              <div className="split-right-header">What I'm doing</div>
+              <NarrationFeed narrations={narrations} />
+            </div>
+          </div>
+        ) : (
+          /* ── Centered idle view ── */
+          <div className="center-col">
+            <VoiceButton status={status} onTranscript={startTask} onListenStart={() => setStatus("listening")} />
+            <NarrationFeed narrations={narrations} />
+          </div>
+        )}
       </main>
 
-      {/* Demo buttons — subtle, bottom corner */}
       <div className="demo-tray">
         <span className="demo-label">Demo presets</span>
         {DEMO_TASKS.map(d => (
@@ -181,7 +208,6 @@ export default function App() {
         ))}
       </div>
 
-      {/* Confirmation modal */}
       {confirmation && (
         <ConfirmationModal
           message={confirmation.message}
