@@ -5,7 +5,6 @@ const MAX_LISTEN_MS = 10000; // hard cutoff — never listens forever
 export default function VoiceButton({ status, onTranscript, onListenStart, langCode = "en-US" }) {
   const recognitionRef  = useRef(null);
   const finalTranscript = useRef("");
-  const interimRef      = useRef("");
   const silenceTimer    = useRef(null);
   const maxTimer        = useRef(null);
   const [error, setError] = useState(null);
@@ -28,7 +27,6 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
     if (text) onTranscript(text);
   }, [onTranscript]);
 
-  // Re-create recognition instance whenever langCode changes
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) { setError("Voice not supported — use Chrome"); return; }
@@ -41,20 +39,17 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
     rec.lang           = langCode;
 
     rec.onresult = (e) => {
-      let interimText = "";
+      let gotFinal = false;
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) {
           finalTranscript.current += e.results[i][0].transcript + " ";
-        } else {
-          interimText += e.results[i][0].transcript;
+          gotFinal = true;
         }
       }
-      // Store latest interim in case Chrome never fires isFinal (production HTTPS quirk)
-      if (interimText.trim()) interimRef.current = interimText;
-
-      // Reset silence timer on ANY speech activity — final or interim
-      clearTimeout(silenceTimer.current);
-      silenceTimer.current = setTimeout(submitAndStop, 1800);
+      if (gotFinal) {
+        clearTimeout(silenceTimer.current);
+        silenceTimer.current = setTimeout(submitAndStop, 1500);
+      }
     };
 
     rec.onerror = (e) => {
@@ -73,10 +68,8 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
 
     rec.onend = () => {
       clearTimers();
-      // Use final transcript if available, fall back to interim (Chrome HTTPS quirk)
-      const text = (finalTranscript.current || interimRef.current).trim();
+      const text = finalTranscript.current.trim();
       finalTranscript.current = "";
-      interimRef.current = "";
       if (text) onTranscript(text);
     };
 
@@ -87,12 +80,10 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
     if (!isIdle) return;
     setError(null);
     finalTranscript.current = "";
-    interimRef.current = "";
     clearTimers();
     try {
       recognitionRef.current?.start();
       onListenStart();
-      // Hard cutoff: if still listening after MAX_LISTEN_MS, force submit
       maxTimer.current = setTimeout(submitAndStop, MAX_LISTEN_MS);
     } catch {
       setError("Couldn't start microphone. Please try again.");
