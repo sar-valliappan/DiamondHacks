@@ -1,4 +1,4 @@
-# Navigator — Your Helper on the Web
+# EasyBrowser — Your Helper on the Web
 
 > **"Just speak. I'll take care of the rest."**
 
