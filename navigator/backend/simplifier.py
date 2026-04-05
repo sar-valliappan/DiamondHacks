@@ -55,7 +55,7 @@ class Narrationifier:
             contents=f"{_SYSTEM_PERSONA}\n\n{prompt}",
             config=types.GenerateContentConfig(
                 temperature=0.3,
-                max_output_tokens=200,
+                max_output_tokens=500,
             ),
         )
         return response.text.strip()
