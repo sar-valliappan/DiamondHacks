@@ -41,17 +41,26 @@ export default function VoiceButton({ status, onTranscript, onListenStart, langC
 
     rec.onresult = (e) => {
       let gotFinal = false;
+      let interimText = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) {
           finalTranscript.current += e.results[i][0].transcript + " ";
           gotFinal = true;
+        } else {
+          interimText += e.results[i][0].transcript;
         }
       }
 
-      // Only reset silence timer when we actually get final speech — not on every interim blip
       if (gotFinal) {
+        // Got a definitive result — submit after 1.5s silence
         clearTimeout(silenceTimer.current);
         silenceTimer.current = setTimeout(submitAndStop, 1500);
+      } else if (interimText.trim() && !finalTranscript.current) {
+        // Production fallback: Chrome sometimes never fires isFinal on deployed HTTPS.
+        // If we only have interim results, treat them as the transcript after 2s silence.
+        finalTranscript.current = interimText;
+        clearTimeout(silenceTimer.current);
+        silenceTimer.current = setTimeout(submitAndStop, 2000);
       }
     };
 

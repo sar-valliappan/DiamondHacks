@@ -243,7 +243,8 @@ export default function App() {
     if (busyRef.current) return;
     busyRef.current = true;
     setStatus("processing"); setNarrations([]); setConfirmation(null);
-    setLiveUrl(null); setLastResult(null);
+    setLastResult(null);
+    // Keep liveUrl showing until new session has its own URL
     synthRef.current.cancel();
     speakQueueRef.current = [];
     isSpeakingRef.current = false;
